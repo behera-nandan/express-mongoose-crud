@@ -5,6 +5,8 @@ const mongoose = require("mongoose");
 const path = require("path");
 const Chat = require("./models/chat.js");
 const methodOverride = require('method-override');
+const ExpressError = require("./ExpressError");
+
 
 
 app.set("view engine", "ejs");
@@ -25,6 +27,13 @@ async function main() {
 
 }
 
+// using wrapAsync
+function asyncWrap(fn) {
+    return function (req, res, next) {
+        fn(req, res, next).catch((err) => next(err))
+    };
+}
+
 
 
 app.get("/", (req, res) => {
@@ -36,42 +45,44 @@ app.get("/", (req, res) => {
 app.get("/chats", async (req, res) => {
 
     let chats = await Chat.find();
+
     res.render("index.ejs", { chats });
 
-})
+});
 
-app.get("/chats/new", (req, res) => {
+app.get("/chats/new", asyncWrap((req, res) => {
     res.render("new.ejs");
 
-})
-app.post("/chats", (req, res) => {
+}));
+app.post("/chats", asyncWrap(async (req, res) => {
+
     let { from, to, msg } = req.body;
-    let newchat = new Chat({
-        from: from,
-        to: to,
-        msg: msg,
+    let newChat = new Chat({
+        from,
+        to,
+        msg,
         created_at: new Date()
+    });
 
+    await newChat.save();
 
-    })
-    newchat.save().then((res) => {
-        console.log("save successfully")
-    }).catch((err) => {
-        console.log(err);
-    })
+    console.log("Saved successfully");
     res.redirect("/chats");
+}));
 
-})
 
 //edit route
-app.get("/chats/:id/edit", async (req, res) => {
+app.get("/chats/:id/edit", asyncWrap(async (req, res, next) => {
     let { id } = req.params;
     let chat = await Chat.findById(id);
+    if (!chat) {
+        return next(new ExpressError(404, "chat not found"));
+    }
     res.render("edit.ejs", { chat });
 
-})
+}));
 
-app.patch("/chats/:id", async (req, res) => {
+app.patch("/chats/:id", asyncWrap(async (req, res) => {
     let { id } = req.params;
     let { msg: newMsg } = req.body;
     let updateChat = await Chat.findByIdAndUpdate(id, { msg: newMsg }, { runValidators: true, new: true });
@@ -79,16 +90,37 @@ app.patch("/chats/:id", async (req, res) => {
     res.redirect("/chats");
 
 
-})
+}));
 
-app.delete("/chats/:id", async (req, res) => {
+app.delete("/chats/:id", asyncWrap(async (req, res) => {
     let { id } = req.params;
     let deletechat = await Chat.findByIdAndDelete(id);
     console.log(deletechat);
     res.redirect("/chats");
 
+}));
+
+const handleValidationErr = (err) => {
+    console.log("validation error occured. please follow the rule");
+
+    return err;
+}
+
+app.use((err, req, res, next) => {
+
+    if (err.name === "ValidatorError") {
+        err = handleValidationErr();
+    }
+    next(err);
 })
 
+
+
+app.use((err, req, res, next) => {
+    let { status = 500, message = "some error occured" } = err;
+    res.status(status).send(message);
+
+})
 
 
 
